@@ -5,11 +5,15 @@ import argparse
 import logging
 import socket
 import time
+import threading
+import subprocess
 
-DEFAULT_KNOCK_SEQUENCE = [1234, 5678, 9012]
+DEFAULT_KNOCK_SEQUENCE = [1560, 6580, 8153]
 DEFAULT_PROTECTED_PORT = 2222
 DEFAULT_SEQUENCE_WINDOW = 10.0
 
+# Tracks progress per IP: { ip: { "index": int, "last_time": float } }
+client_progress = {}
 
 def setup_logging():
     logging.basicConfig(
@@ -19,17 +23,58 @@ def setup_logging():
     )
 
 
-def open_protected_port(protected_port):
+def open_protected_port(protected_port, ip):
     """Open the protected port using firewall rules."""
     # TODO: Use iptables/nftables to allow access to protected_port.
-    logging.info("TODO: Open firewall for port %s", protected_port)
+    logging.info("Opening firewall for %s on port %s", ip, protected_port)
+    subprocess.run(["iptables", "-I", "INPUT", "-p", "tcp", "--dport", str(protected_port), "-s", ip, "-j", "ACCEPT"])
+    logging.info("Port %s opened for %s", protected_port, ip)
 
 
 def close_protected_port(protected_port):
     """Close the protected port using firewall rules."""
     # TODO: Remove firewall rules for protected_port.
-    logging.info("TODO: Close firewall for port %s", protected_port)
+    logging.info("Closing firewall for port %s", protected_port)
+    subprocess.run(["iptables", "-D", "INPUT", "-p", "tcp", "--dport", str(protected_port), "-j", "ACCEPT"])
+    logging.info("Port %s closed", protected_port)
 
+def listen_on_port(port, sequence, window_seconds, protected_port):
+    """Listen for knocks on a single port."""
+    logger = logging.getLogger("KnockServer")
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(("0.0.0.0", port))
+    
+    logger.info("Listening on knock port %s", port)
+    
+    while True:
+        data, addr = sock.recvfrom(1024)
+        ip = addr[0]
+        now = time.time()
+
+        # Initialize tracking for new IPs
+        if ip not in client_progress:
+            client_progress[ip] = {"index": 0, "last_time": now}
+        
+        # Reset if too slow
+        if now - client_progress[ip]["last_time"] > window_seconds:
+            client_progress[ip]["index"] = 0
+        
+        expected_port = sequence[client_progress[ip]["index"]]
+        
+        if port == expected_port:
+            client_progress[ip]["index"] += 1
+            client_progress[ip]["last_time"] = now
+            logger.info("%s knocked correctly on %s", ip, port)
+            
+            # Sequence complete
+            if client_progress[ip]["index"] == len(sequence):
+                logger.info("Correct sequence from %s!", ip)
+                open_protected_port(protected_port, ip)
+                client_progress[ip]["index"] = 0
+        
+        else:
+            logger.info("%s knocked wrong port %s (expected %s). Resetting.", ip, port, expected_port)
+            client_progress[ip]["index"] = 0
 
 def listen_for_knocks(sequence, window_seconds, protected_port):
     """Listen for knock sequence and open the protected port."""
@@ -42,6 +87,15 @@ def listen_for_knocks(sequence, window_seconds, protected_port):
     # TODO: Enforce timing window per sequence.
     # TODO: On correct sequence, call open_protected_port().
     # TODO: On incorrect sequence, reset progress.
+    logger = logging.getLogger("KnockServer")
+    logger.info("Knock sequence: %s", sequence)
+    logger.info("Protected port: %s", protected_port)
+    logger.info("Sequence window: %s seconds", window_seconds)
+    
+    # Start a thread for each knock port
+    for port in sequence:
+        t = threading.Thread(target=listen_on_port, args=(port, sequence, window_seconds, protected_port), daemon=True)
+        t.start()
 
     while True:
         time.sleep(1)

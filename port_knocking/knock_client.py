@@ -5,7 +5,7 @@ import argparse
 import socket
 import time
 
-DEFAULT_KNOCK_SEQUENCE = [1234, 5678, 9012]
+DEFAULT_KNOCK_SEQUENCE = [1560, 6580, 8153]
 DEFAULT_PROTECTED_PORT = 2222
 DEFAULT_DELAY = 0.3
 
@@ -14,25 +14,32 @@ def send_knock(target, port, delay):
     """Send a single knock to the target port."""
     # TODO: Choose UDP or TCP knocks based on your design.
     # Example TCP knock stub:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    
     try:
-        with socket.create_connection((target, port), timeout=1.0):
-            pass
-    except OSError:
-        pass
+        sock.sendto(b"knock", (target, port))
+    finally:
+        sock.close()
+    
     time.sleep(delay)
 
 
 def perform_knock_sequence(target, sequence, delay):
     """Send the full knock sequence."""
+    print(f"[*] Sending knock sequence: {sequence}")
     for port in sequence:
+        print(f"[*] Knocking on port {port}")
         send_knock(target, port, delay)
+    print("[+] Knock sequence complete")
 
 
 def check_protected_port(target, protected_port):
     """Try connecting to the protected port after knocking."""
     # TODO: Replace with real service connection if needed.
+    print(f"[*] Checking access to protected port {protected_port}...")
     try:
-        with socket.create_connection((target, protected_port), timeout=2.0):
+        time.sleep(0.5)
+        with socket.create_connection((target, protected_port), timeout=3.0):
             print(f"[+] Connected to protected port {protected_port}")
     except OSError:
         print(f"[-] Could not connect to protected port {protected_port}")
